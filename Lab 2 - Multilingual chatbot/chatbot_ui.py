@@ -258,25 +258,48 @@ def create_chatbot_ui(transcribe_fn, query_rag_fn, speak_fn):
                 print(f"Error saving/processing audio: {e}")
     
     def on_upload_change(change):
-        if upload_btn.value:
-            uploaded_file = list(upload_btn.value.values())[0]
-            filename = os.path.join(INPUT_DIR, uploaded_file['metadata']['name'])
+        if not upload_btn.value:
+            return
+
+        # Handle different ipywidgets versions
+        # ipywidgets 7: value is a dict {filename: {metadata: {...}, content: ...}}
+        # ipywidgets 8: value is a tuple ({name: ..., content: ...}, ...)
+        
+        try:
+            if isinstance(upload_btn.value, tuple):
+                # ipywidgets 8+
+                uploaded_file = upload_btn.value[0]
+                filename = uploaded_file['name']
+                content = uploaded_file['content']
+                # content might be memoryview
+                if hasattr(content, 'tobytes'):
+                    content = content.tobytes()
+            else:
+                # ipywidgets 7
+                uploaded_file = list(upload_btn.value.values())[0]
+                filename = uploaded_file['metadata']['name']
+                content = uploaded_file['content']
+
+            filepath = os.path.join(INPUT_DIR, filename)
             
             with out:
                 out.clear_output()
-                print(f"Uploading file: {uploaded_file['metadata']['name']}")
+                print(f"Uploading file: {filename}")
                 try:
-                    with open(filename, 'wb') as f:
-                        f.write(uploaded_file['content'])
+                    with open(filepath, 'wb') as f:
+                        f.write(content)
                     
-                    print(f"Saved to: {filename}")
-                    process_interaction(filename, lang_dropdown.value)
+                    print(f"Saved to: {filepath}")
+                    process_interaction(filepath, lang_dropdown.value)
                     
                     # Refresh file list
                     file_selector.options = get_audio_files()
                     
                 except Exception as e:
                     print(f"Error processing uploaded file: {e}")
+        except Exception as e:
+            with out:
+                print(f"Error handling upload: {e}")
     
     def on_refresh_click(b):
         file_selector.options = get_audio_files()
@@ -335,7 +358,7 @@ def create_chatbot_ui(transcribe_fn, query_rag_fn, speak_fn):
     display(lang_dropdown)
     display(widgets.HTML("<h3>Record Audio</h3>"))
     display(recording_box)
-    display(widgets.HTML("<h3>Upload Audio File</h3>"))
+    display(widgets.HTML("<h3>Upload Audio File</h3><p><strong>Note:</strong> only WAV Format is supported .</p>"))
     display(upload_btn)
     display(widgets.HTML("<h3>Or Select Saved File</h3>"))
     display(file_box)
