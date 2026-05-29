@@ -1,3 +1,4 @@
+import requests
 from IPython.display import Markdown, display
 from langchain_core.documents import Document
 from langchain.prompts.chat import (
@@ -5,6 +6,62 @@ from langchain.prompts.chat import (
     SystemMessagePromptTemplate,
     HumanMessagePromptTemplate,
 )
+
+
+class NVIDIARerankClient:
+    """Thin client for NVIDIA's hosted reranking endpoint.
+
+    Mirrors the `compress_documents(query, documents)` contract used by
+    langchain's `NVIDIARerank`, so it is a drop-in replacement for the
+    RAGPipeline. Calls the current REST endpoint:
+        https://ai.api.nvidia.com/v1/retrieval/{model}/reranking
+    """
+
+    def __init__(self, model, api_key, base_url=None, timeout=60):
+        self.model = model
+        self.api_key = api_key
+        self.invoke_url = base_url or (
+            f"https://ai.api.nvidia.com/v1/retrieval/{model}/reranking"
+        )
+        self.timeout = timeout
+        self._session = requests.Session()
+
+    def compress_documents(self, query, documents):
+        if not documents:
+            return []
+
+        payload = {
+            "model": self.model,
+            "query": {"text": query},
+            "passages": [{"text": doc.page_content} for doc in documents],
+        }
+        headers = {
+            "Authorization": f"Bearer {self.api_key}",
+            "Accept": "application/json",
+        }
+
+        response = self._session.post(
+            self.invoke_url, headers=headers, json=payload, timeout=self.timeout
+        )
+        response.raise_for_status()
+        body = response.json()
+
+        rankings = body.get("rankings", [])
+        reranked = []
+        for ranking in rankings:
+            idx = ranking.get("index")
+            if idx is None or idx < 0 or idx >= len(documents):
+                continue
+            src = documents[idx]
+            new_metadata = dict(src.metadata)
+            score = ranking.get("logit", ranking.get("score"))
+            if score is not None:
+                new_metadata["relevance_score"] = score
+            reranked.append(
+                Document(page_content=src.page_content, metadata=new_metadata)
+            )
+        return reranked
+
 
 class RAGPipeline:
     def __init__(
