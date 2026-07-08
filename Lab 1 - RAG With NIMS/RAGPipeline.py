@@ -82,25 +82,40 @@ class RAGPipeline:
 
     # ---------------- TOPIC CONTROL ---------------- #
 
+    # Directive appended to the topic-control system prompt. The
+    # nemoguard-8b-topic-control NIM otherwise replies in natural language
+    # (e.g. "I cannot provide information on that."), which we cannot parse
+    # reliably. Forcing a single-token verdict makes the check deterministic.
+    _CLASSIFIER_DIRECTIVE = (
+        "\n\nClassify ONLY the user's latest message against the topic rules "
+        "above. Respond with exactly one word and nothing else: 'on-topic' if "
+        "the message complies with the rules, or 'off-topic' if it does not."
+    )
+
     def check_topic_control(self, query):
         if not self.topic_control_prompt:
             return True
 
         control_messages = [
-            {"role": "system", "content": self.topic_control_prompt},
-            {"role": "user", "content": query}
+            {
+                "role": "system",
+                "content": self.topic_control_prompt + self._CLASSIFIER_DIRECTIVE,
+            },
+            {"role": "user", "content": query},
         ]
 
         completion = self.topic_control_client.chat.completions.create(
             model=self.topic_control_model,
             messages=control_messages,
-            temperature=0.5,
+            temperature=0.0,  # deterministic classification
             top_p=1,
-            max_tokens=1024
+            max_tokens=8,     # verdict is a single token
         )
 
         classification = completion.choices[0].message.content.strip().lower()
-        return "on-topic" in classification
+        # Treat as on-topic only on an explicit "on-topic" verdict; anything
+        # else (off-topic, empty, or an unexpected reply) fails closed.
+        return "on-topic" in classification and "off-topic" not in classification
 
     # ---------------- HELPER LLM ---------------- #
 
