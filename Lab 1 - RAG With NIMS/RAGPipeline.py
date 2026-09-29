@@ -112,12 +112,25 @@ class RAGPipeline:
             max_tokens=8,     # verdict is a single token
         )
 
-        classification = completion.choices[0].message.content.strip().lower()
+        content = completion.choices[0].message.content
+        if not content:
+            # No verdict returned: fail closed.
+            return False
+        classification = content.strip().lower()
         # Treat as on-topic only on an explicit "on-topic" verdict; anything
         # else (off-topic, empty, or an unexpected reply) fails closed.
         return "on-topic" in classification and "off-topic" not in classification
 
     # ---------------- HELPER LLM ---------------- #
+
+    def _invoke_llm(self, messages, retries=1, **kwargs):
+        # The hosted LLM occasionally returns an empty completion; retry
+        # before surfacing a clear message instead of a blank answer.
+        for _ in range(retries + 1):
+            content = (self.gpt_client.invoke(messages, **kwargs).content or "").strip()
+            if content:
+                return content
+        return "_The model returned an empty response. Please re-run this cell._"
 
     def llm_markdown_response(self, input, prompt_prefix=None):
         if prompt_prefix is None:
@@ -135,8 +148,7 @@ class RAGPipeline:
 
         formatted_prompt = prompt.format_prompt(input=input)
         messages = formatted_prompt.to_messages()
-        result = self.gpt_client.invoke(messages, max_tokens=1024)
-        return result.content.strip()
+        return self._invoke_llm(messages, max_tokens=1024)
 
     # ---------------- DOCUMENT MARKDOWN ---------------- #
 
@@ -219,8 +231,7 @@ class RAGPipeline:
 
         formatted_prompt = prompt.format_prompt(context=context_text, query=query)
         messages = formatted_prompt.to_messages()
-        result = self.gpt_client.invoke(messages)
-        return result.content.strip()
+        return self._invoke_llm(messages)
 
     # ---------------- MAIN QUERY ---------------- #
 
